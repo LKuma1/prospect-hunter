@@ -5,6 +5,6 @@ export default {
   out: './src/lib/db/migrations',
   dialect: 'sqlite',
   dbCredentials: {
-    url: './prospect-hunter.db',
+    url: process.env.DATABASE_URL ?? './prospect-hunter.db',
   },
 } satisfies Config;
