@@ -3,12 +3,15 @@ import { db } from '@/lib/db';
 import { leads } from '@/lib/db/schema';
 import { searchInstagramProfiles } from '@/lib/services/apify.service';
 import { calculateScore } from '@/lib/services/scoring.service';
+import { resolveLocation } from '@/lib/services/geocoding.service';
 import { handleApiError } from '@/lib/api-error';
 
 const SearchSchema = z.object({
   nicho: z.string().min(1, 'Nicho é obrigatório'),
   location: z.string().optional(),
   limit: z.number().int().min(1).max(200).default(50),
+  minFollowers: z.number().int().min(0).default(500),
+  maxFollowers: z.number().int().max(10_000_000).default(500_000),
 });
 
 export async function POST(request: Request) {
@@ -16,7 +19,18 @@ export async function POST(request: Request) {
     const body = await request.json();
     const params = SearchSchema.parse(body);
 
-    const profiles = await searchInstagramProfiles(params);
+    // Geocode location if provided
+    let locationLabel: string | null = null;
+    if (params.location) {
+      const geo = await resolveLocation(params.location);
+      locationLabel = geo ? geo.formatted : params.location;
+    }
+
+    const profiles = await searchInstagramProfiles({
+      nicho: params.nicho,
+      location: params.location,
+      limit: params.limit,
+    });
 
     let inserted = 0;
     let duplicates = 0;
@@ -26,13 +40,18 @@ export async function POST(request: Request) {
       if (inserted >= params.limit) break;
       if (!profile.username) continue;
 
+      // Follower range filter (skip if outside expected range for local professionals)
+      if (profile.followersCount > 0) {
+        if (profile.followersCount < params.minFollowers || profile.followersCount > params.maxFollowers) {
+          continue;
+        }
+      }
+
       const { score, breakdown } = calculateScore({
         followers: profile.followersCount ?? 0,
         bio: profile.biography ?? '',
         nicho: params.nicho,
       });
-
-      if (score === 0) continue;
 
       const result = await db
         .insert(leads)
@@ -46,7 +65,7 @@ export async function POST(request: Request) {
           profileUrl: profile.url ?? `https://instagram.com/${profile.username}`,
           avatarUrl: profile.profilePicUrl,
           nicho: params.nicho,
-          location: params.location ?? null,
+          location: locationLabel,
           score,
           scoreBreakdown: JSON.stringify(breakdown),
           collectedAt: new Date(),
