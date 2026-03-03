@@ -5,6 +5,9 @@ import { LeadScoreBadge } from '@/components/leads/LeadScoreBadge';
 import { LeadStatusDropdown } from '@/components/leads/LeadStatusDropdown';
 import { GenerateMessageButton } from '@/components/leads/GenerateMessageButton';
 import { BackToLeadsButton } from '@/components/leads/BackToLeadsButton';
+import { db } from '@/lib/db';
+import { leads, messages } from '@/lib/db/schema';
+import { eq, desc } from 'drizzle-orm';
 import type { Lead, Message, ScoreBreakdown } from '@/types';
 
 interface LeadDetailData extends Lead {
@@ -14,17 +17,30 @@ interface LeadDetailData extends Lead {
 }
 
 async function getLeadDetail(id: string): Promise<LeadDetailData | null> {
-  try {
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/leads/${id}`,
-      { cache: 'no-store' }
-    );
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error('Erro ao buscar lead');
-    return res.json();
-  } catch {
-    return null;
-  }
+  const leadId = Number(id);
+  if (isNaN(leadId)) return null;
+
+  const lead = await db.query.leads.findFirst({
+    where: eq(leads.id, leadId),
+  });
+
+  if (!lead) return null;
+
+  const allMessages = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.leadId, leadId))
+    .orderBy(desc(messages.createdAt));
+
+  const approvedMessages = allMessages.filter((m) => m.approved);
+  const hasPendingMessage = allMessages.some((m) => !m.approved);
+
+  return {
+    ...(lead as Lead),
+    allMessages: allMessages as Message[],
+    approvedMessages: approvedMessages as Message[],
+    hasPendingMessage,
+  };
 }
 
 export default async function LeadDetailPage({

@@ -1,16 +1,62 @@
 import { Users, Plus, CheckSquare, TrendingUp, Trophy } from 'lucide-react';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { LeadsBarChart } from '@/components/dashboard/LeadsBarChart';
+import { db } from '@/lib/db';
+import { leads, messages } from '@/lib/db/schema';
+import { eq, gte, sql, count } from 'drizzle-orm';
 import type { DashboardKPIs } from '@/types';
 
 async function getKPIs(): Promise<DashboardKPIs> {
   try {
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/kpis`,
-      { cache: 'no-store' }
-    );
-    if (!res.ok) throw new Error('Erro ao buscar KPIs');
-    return res.json();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const [
+      [totalRow],
+      [newTodayRow],
+      [pendingRow],
+      [respondedRow],
+      [contactedRow],
+      [closedRow],
+      chartData,
+    ] = await Promise.all([
+      db.select({ count: count() }).from(leads),
+      db.select({ count: count() }).from(leads).where(gte(leads.collectedAt, todayStart)),
+      db.select({ count: count() }).from(messages).where(eq(messages.approved, false)),
+      db.select({ count: count() }).from(leads).where(eq(leads.status, 'Respondeu')),
+      db.select({ count: count() }).from(leads).where(eq(leads.status, 'Contatado')),
+      db.select({ count: count() }).from(leads).where(eq(leads.status, 'Fechado')),
+      db
+        .select({
+          date: sql<string>`to_char(${leads.collectedAt}, 'YYYY-MM-DD')`,
+          count: count(),
+        })
+        .from(leads)
+        .where(gte(leads.collectedAt, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)))
+        .groupBy(sql`to_char(${leads.collectedAt}, 'YYYY-MM-DD')`),
+    ]);
+
+    const contacted = contactedRow?.count ?? 0;
+    const responded = respondedRow?.count ?? 0;
+    const responseRate = contacted > 0 ? parseFloat(((responded / contacted) * 100).toFixed(1)) : 0;
+
+    const chartMap = new Map(chartData.map((d) => [d.date, d.count]));
+    const leadsPerDay: { date: string; count: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      leadsPerDay.push({ date: dateStr, count: chartMap.get(dateStr) ?? 0 });
+    }
+
+    return {
+      totalLeads: totalRow?.count ?? 0,
+      newToday: newTodayRow?.count ?? 0,
+      pendingApprovals: pendingRow?.count ?? 0,
+      responseRate,
+      closedLeads: closedRow?.count ?? 0,
+      leadsPerDay,
+    };
   } catch {
     return {
       totalLeads: 0,

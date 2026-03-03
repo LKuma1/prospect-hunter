@@ -2,7 +2,12 @@ import { Suspense } from 'react';
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { LeadsTable } from '@/components/leads/LeadsTable';
 import { ExportCSVButton } from '@/components/leads/ExportCSVButton';
-import type { PaginatedResponse, Lead } from '@/types';
+import { db } from '@/lib/db';
+import { leads } from '@/lib/db/schema';
+import { and, inArray, like, or, gte, lte, desc, count } from 'drizzle-orm';
+import type { LeadStatus, PaginatedResponse, Lead } from '@/types';
+
+const VALID_STATUSES: LeadStatus[] = ['Novo', 'Contatado', 'Respondeu', 'Fechado', 'Descartado'];
 
 interface LeadsPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -31,14 +36,78 @@ function buildFilterParams(searchParams: Record<string, string | string[] | unde
 }
 
 async function fetchLeads(searchParams: Record<string, string | string[] | undefined>): Promise<PaginatedResponse<Lead>> {
-  const params = buildFilterParams(searchParams);
+  const getArr = (key: string): string[] => {
+    const val = searchParams[key];
+    if (!val) return [];
+    return Array.isArray(val) ? val : [val];
+  };
 
-  const res = await fetch(
-    `${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/leads?${params.toString()}`,
-    { cache: 'no-store' }
-  );
-  if (!res.ok) throw new Error('Falha ao buscar leads');
-  return res.json();
+  const statusArr = getArr('status');
+  const nichoArr = getArr('nicho');
+  const minScore = searchParams.minScore ? Number(searchParams.minScore) : undefined;
+  const startDate = searchParams.startDate as string | undefined;
+  const endDate = searchParams.endDate as string | undefined;
+  const search = searchParams.search as string | undefined;
+  const page = Math.max(1, Number(searchParams.page ?? 1));
+  const limit = Math.min(100, Math.max(1, Number(searchParams.limit ?? 25)));
+
+  const conditions = [];
+
+  if (statusArr.length) {
+    const validStatus = statusArr.filter((s): s is LeadStatus =>
+      VALID_STATUSES.includes(s as LeadStatus)
+    );
+    if (validStatus.length) conditions.push(inArray(leads.status, validStatus));
+  }
+
+  if (nichoArr.length) {
+    conditions.push(inArray(leads.nicho, nichoArr));
+  }
+
+  if (minScore !== undefined && minScore > 0) {
+    conditions.push(gte(leads.score, minScore));
+  }
+
+  if (startDate) {
+    conditions.push(gte(leads.collectedAt, new Date(startDate)));
+  }
+
+  if (endDate) {
+    const endOfDay = new Date(endDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    conditions.push(lte(leads.collectedAt, endOfDay));
+  }
+
+  if (search) {
+    conditions.push(
+      or(
+        like(leads.username, `%${search}%`),
+        like(leads.nicho, `%${search}%`)
+      )
+    );
+  }
+
+  const where = conditions.length ? and(...conditions) : undefined;
+
+  const [data, totalResult] = await Promise.all([
+    db
+      .select()
+      .from(leads)
+      .where(where)
+      .orderBy(desc(leads.collectedAt))
+      .limit(limit)
+      .offset((page - 1) * limit),
+    db.select({ count: count() }).from(leads).where(where),
+  ]);
+
+  const total = totalResult[0]?.count ?? 0;
+
+  return {
+    data: data as Lead[],
+    total,
+    page,
+    pages: Math.ceil(total / limit),
+  };
 }
 
 export default async function LeadsPage({ searchParams }: LeadsPageProps) {
