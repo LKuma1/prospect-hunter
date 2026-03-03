@@ -26,7 +26,7 @@ export async function GET() {
       db.select({ count: count() }).from(leads).where(eq(leads.status, 'Fechado')),
       db
         .select({
-          date: sql<string>`date(${leads.collectedAt} / 1000, 'unixepoch')`,
+          date: sql<string>`to_char(${leads.collectedAt}, 'YYYY-MM-DD')`,
           count: count(),
         })
         .from(leads)
@@ -36,7 +36,7 @@ export async function GET() {
             new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
           )
         )
-        .groupBy(sql`date(${leads.collectedAt} / 1000, 'unixepoch')`),
+        .groupBy(sql`to_char(${leads.collectedAt}, 'YYYY-MM-DD')`),
     ]);
 
     const contacted = contactedRow?.count ?? 0;

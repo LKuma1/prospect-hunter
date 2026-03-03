@@ -1,10 +1,9 @@
-import { sqliteTable, integer, text, index } from 'drizzle-orm/sqlite-core';
-import { sql } from 'drizzle-orm';
+import { pgTable, integer, text, index, boolean, timestamp, serial } from 'drizzle-orm/pg-core';
 
-export const leads = sqliteTable(
+export const leads = pgTable(
   'leads',
   {
-    id: integer('id').primaryKey({ autoIncrement: true }),
+    id: serial('id').primaryKey(),
     username: text('username').notNull().unique(),
     fullName: text('full_name'),
     bio: text('bio'),
@@ -17,15 +16,9 @@ export const leads = sqliteTable(
     location: text('location'),
     score: integer('score').notNull().default(0),
     scoreBreakdown: text('score_breakdown').notNull().default('{}'),
-    status: text('status', {
-      enum: ['Novo', 'Contatado', 'Respondeu', 'Fechado', 'Descartado'],
-    })
-      .notNull()
-      .default('Novo'),
-    statusUpdatedAt: integer('status_updated_at', { mode: 'timestamp' }),
-    collectedAt: integer('collected_at', { mode: 'timestamp' })
-      .notNull()
-      .default(sql`(unixepoch() * 1000)`),
+    status: text('status').notNull().default('Novo'),
+    statusUpdatedAt: timestamp('status_updated_at'),
+    collectedAt: timestamp('collected_at').notNull().defaultNow(),
   },
   (table) => ({
     statusIdx: index('leads_status_idx').on(table.status),
@@ -35,18 +28,16 @@ export const leads = sqliteTable(
   })
 );
 
-export const messages = sqliteTable(
+export const messages = pgTable(
   'messages',
   {
-    id: integer('id').primaryKey({ autoIncrement: true }),
+    id: serial('id').primaryKey(),
     leadId: integer('lead_id')
       .notNull()
       .references(() => leads.id, { onDelete: 'cascade' }),
     content: text('content').notNull(),
-    approved: integer('approved', { mode: 'boolean' }).notNull().default(false),
-    createdAt: integer('created_at', { mode: 'timestamp' })
-      .notNull()
-      .default(sql`(unixepoch() * 1000)`),
+    approved: boolean('approved').notNull().default(false),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (table) => ({
     approvedIdx: index('messages_approved_idx').on(table.approved),
@@ -54,11 +45,9 @@ export const messages = sqliteTable(
   })
 );
 
-export const settings = sqliteTable('settings', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+export const settings = pgTable('settings', {
+  id: serial('id').primaryKey(),
   key: text('key').notNull().unique(),
   value: text('value').notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch() * 1000)`),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

@@ -1,10 +1,7 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from './schema';
 
-const sqlite = new Database(process.env.DATABASE_URL ?? 'prospect-hunter.db');
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('synchronous = normal');
-sqlite.pragma('foreign_keys = ON');
+const client = postgres(process.env.DATABASE_URL!);
 
-export const db = drizzle(sqlite, { schema });
+export const db = drizzle(client, { schema });
