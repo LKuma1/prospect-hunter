@@ -45,3 +45,5 @@ next-env.d.ts
 prospect-hunter.db
 prospect-hunter.db-wal
 prospect-hunter.db-shm
+
+.vercel

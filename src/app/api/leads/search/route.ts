@@ -23,6 +23,8 @@ export async function POST(request: Request) {
     const insertedLeads = [];
 
     for (const profile of profiles) {
+      if (!profile.username) continue;
+
       const { score, breakdown } = calculateScore({
         followers: profile.followersCount ?? 0,
         bio: profile.biography ?? '',
