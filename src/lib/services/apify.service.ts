@@ -78,11 +78,8 @@ async function fetchDataset(datasetId: string): Promise<ApifyProfile[]> {
   const res = await apifyFetch(`/datasets/${datasetId}/items?clean=true`);
   if (!res.ok) throw new Error('Falha ao buscar resultados do Apify dataset');
   const raw = (await res.json()) as RawApifyProfile[];
-  console.log('[apify] total items:', raw.length);
-  if (raw.length > 0) {
-    console.log('[apify] first item sample:', JSON.stringify(raw[0]));
-  }
-  return raw.map(normalizeProfile);
+  const validItems = raw.filter((item) => !item.error);
+  return validItems.map(normalizeProfile);
 }
 
 export async function searchInstagramProfiles(params: {
@@ -97,11 +94,11 @@ export async function searchInstagramProfiles(params: {
   let runId: string;
 
   try {
-    runId = await runActor({ search: searchQuery, resultsLimit: params.limit });
+    runId = await runActor({ searches: [searchQuery], searchType: 'user', resultsLimit: params.limit });
   } catch (err) {
     if (err instanceof Error && err.message.includes('429')) {
       await new Promise((r) => setTimeout(r, 60_000));
-      runId = await runActor({ search: searchQuery, resultsLimit: params.limit });
+      runId = await runActor({ searches: [searchQuery], searchType: 'user', resultsLimit: params.limit });
     } else {
       throw err;
     }
