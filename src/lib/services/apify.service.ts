@@ -98,24 +98,37 @@ function buildHashtagUrls(nicho: string, location?: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Profile extraction from post item (hashtag scrape response)
+// Username extraction from hashtag post item
 // ---------------------------------------------------------------------------
 
-function extractProfileFromPost(raw: RawItem): ApifyProfile | null {
+function extractUsernameFromPost(raw: RawItem): string | null {
   const owner = raw.owner as RawItem | undefined;
-
   const username = ((owner?.username ?? raw.ownerUsername ?? raw.username) as string | undefined)?.trim();
+  return username ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Profile normalization from full profile detail item
+// ---------------------------------------------------------------------------
+
+function normalizeFullProfile(raw: RawItem): ApifyProfile | null {
+  const username = ((raw.username ?? raw.userName) as string | undefined)?.trim();
   if (!username) return null;
+
+  // edge_followed_by / edge_follow are GraphQL field names sometimes returned
+  const edgeFollowedBy = raw.edge_followed_by as { count?: number } | undefined;
+  const edgeFollow = raw.edge_follow as { count?: number } | undefined;
+  const edgeMedia = raw.edge_owner_to_timeline_media as { count?: number } | undefined;
 
   return {
     username,
-    fullName: ((owner?.fullName ?? owner?.full_name ?? raw.ownerFullName ?? null) as string | null),
-    biography: ((owner?.biography ?? owner?.bio ?? raw.ownerBio ?? null) as string | null),
-    followersCount: Number(owner?.followersCount ?? owner?.followers ?? raw.ownerFollowersCount ?? 0),
-    followsCount: Number(owner?.followsCount ?? owner?.follows ?? raw.ownerFollowsCount ?? 0),
-    postsCount: Number(owner?.postsCount ?? owner?.mediaCount ?? raw.ownerPostsCount ?? 0),
-    profilePicUrl: ((owner?.profilePicUrl ?? owner?.profile_pic_url ?? raw.ownerProfilePicUrl ?? null) as string | null),
-    url: `https://www.instagram.com/${username}/`,
+    fullName: ((raw.fullName ?? raw.full_name ?? null) as string | null),
+    biography: ((raw.biography ?? raw.bio ?? null) as string | null),
+    followersCount: Number(raw.followersCount ?? raw.followers_count ?? edgeFollowedBy?.count ?? 0),
+    followsCount: Number(raw.followsCount ?? raw.follows_count ?? edgeFollow?.count ?? 0),
+    postsCount: Number(raw.postsCount ?? raw.mediaCount ?? raw.media_count ?? edgeMedia?.count ?? 0),
+    profilePicUrl: ((raw.profilePicUrl ?? raw.profile_pic_url ?? null) as string | null),
+    url: ((raw.url ?? `https://www.instagram.com/${username}/`) as string),
   };
 }
 
@@ -130,13 +143,13 @@ export async function searchInstagramProfiles(params: {
 }): Promise<ApifyProfile[]> {
   const hashtagUrls = buildHashtagUrls(params.nicho, params.location);
 
-  // Fetch more than needed to account for deduplication and filtering
+  // Fetch more posts than needed to get enough unique usernames after dedup
   const fetchLimit = Math.min(params.limit * 5, 200);
 
-  let runId: string;
-
+  // ── Phase 1: Discover usernames via hashtag posts ──────────────────────────
+  let phase1RunId: string;
   try {
-    runId = await runActor({
+    phase1RunId = await runActor({
       directUrls: hashtagUrls,
       resultsType: 'posts',
       resultsLimit: fetchLimit,
@@ -144,7 +157,7 @@ export async function searchInstagramProfiles(params: {
   } catch (err) {
     if (err instanceof Error && err.message.includes('429')) {
       await new Promise((r) => setTimeout(r, 60_000));
-      runId = await runActor({
+      phase1RunId = await runActor({
         directUrls: hashtagUrls,
         resultsType: 'posts',
         resultsLimit: fetchLimit,
@@ -154,19 +167,53 @@ export async function searchInstagramProfiles(params: {
     }
   }
 
-  const datasetId = await pollRunStatus(runId);
-  const items = await fetchDatasetRaw(datasetId);
+  const phase1DatasetId = await pollRunStatus(phase1RunId);
+  const posts = await fetchDatasetRaw(phase1DatasetId);
 
-  // Deduplicate by username
+  // Collect unique usernames (take up to limit*2 to allow for later filtering)
   const seen = new Set<string>();
-  const profiles: ApifyProfile[] = [];
-
-  for (const item of items) {
-    const profile = extractProfileFromPost(item);
-    if (profile && !seen.has(profile.username)) {
-      seen.add(profile.username);
-      profiles.push(profile);
+  const usernames: string[] = [];
+  for (const post of posts) {
+    const username = extractUsernameFromPost(post);
+    if (username && !seen.has(username)) {
+      seen.add(username);
+      usernames.push(username);
+      if (usernames.length >= params.limit * 2) break;
     }
+  }
+
+  if (usernames.length === 0) return [];
+
+  // ── Phase 2: Fetch full profile details (with follower counts) ─────────────
+  const profileUrls = usernames.map((u) => `https://www.instagram.com/${u}/`);
+
+  let phase2RunId: string;
+  try {
+    phase2RunId = await runActor({
+      directUrls: profileUrls,
+      resultsType: 'details',
+      resultsLimit: profileUrls.length,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('429')) {
+      await new Promise((r) => setTimeout(r, 60_000));
+      phase2RunId = await runActor({
+        directUrls: profileUrls,
+        resultsType: 'details',
+        resultsLimit: profileUrls.length,
+      });
+    } else {
+      throw err;
+    }
+  }
+
+  const phase2DatasetId = await pollRunStatus(phase2RunId);
+  const profileItems = await fetchDatasetRaw(phase2DatasetId);
+
+  const profiles: ApifyProfile[] = [];
+  for (const item of profileItems) {
+    const profile = normalizeFullProfile(item);
+    if (profile) profiles.push(profile);
   }
 
   return profiles;
