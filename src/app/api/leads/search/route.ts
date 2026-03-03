@@ -23,6 +23,7 @@ export async function POST(request: Request) {
     const insertedLeads = [];
 
     for (const profile of profiles) {
+      if (inserted >= params.limit) break;
       if (!profile.username) continue;
 
       const { score, breakdown } = calculateScore({
@@ -30,6 +31,8 @@ export async function POST(request: Request) {
         bio: profile.biography ?? '',
         nicho: params.nicho,
       });
+
+      if (score === 0) continue;
 
       const result = await db
         .insert(leads)
@@ -43,6 +46,7 @@ export async function POST(request: Request) {
           profileUrl: profile.url ?? `https://instagram.com/${profile.username}`,
           avatarUrl: profile.profilePicUrl,
           nicho: params.nicho,
+          location: params.location ?? null,
           score,
           scoreBreakdown: JSON.stringify(breakdown),
           collectedAt: new Date(),
